@@ -16,6 +16,7 @@
 #include <avr/interrupt.h>                  // ไลบรารีสำหรับใช้ Interrupts
 #include <Wire.h>                            // ไลบรารีสำหรับ I2C communication
 #include <ServoTimer2.h>                     // ไลบรารีควบคุม Servo โดยใช้ Timer2
+#include <math.h>                           // IMU normalized
 
 
 // ค่าคงที่ของ Timer
@@ -29,14 +30,20 @@
 #define md1_BIN1 41  // มอเตอร์ M2 (RR) - ขา IN1
 #define md1_BIN2 43  // มอเตอร์ M2 (RR) - ขา IN2
 #define md1_STBY 39  // ขาสำหรับเปิดใช้งานมอเตอร์ (STBY)
-#define md1_PWM 12   // PWM control for MD1
+#define md1_PWMA 12   // PWMA control for MD1
+#define md1_PWMB 13   // PWMB control for MD1
 
 #define md2_AIN2 42  // มอเตอร์ M3 (FR) - ขา IN2
 #define md2_AIN1 40  // มอเตอร์ M3 (FR) - ขา IN1
 #define md2_BIN1 36  // มอเตอร์ M4 (RL) - ขา IN1
 #define md2_BIN2 34  // มอเตอร์ M4 (RL) - ขา IN2
-#define md2_PWM 10   // PWM control for MD2
+#define md2_PWMA 10   // PWMA control for MD2
+#define md2_PWMB 11   // PWMB control for MD2
+
 #define md2_STBY 38  // ขาสำหรับเปิดใช้งานมอเตอร์ (STBY)
+
+#define RELAY1 33    // pin relay 1
+#define RELAY2 33    // pin relay 2
 
 // ค่า Baud Rate ของ Serial Communication
 #define BAUD_RATE 250000
@@ -93,7 +100,7 @@ uint16_t STEP_SIZE_Y = 28;  // ขยับ 5 องศา ≈ 28us
 #define DEBUG_BUFFER_SIZE 128
 char debug_buffer[DEBUG_BUFFER_SIZE];
 bool DEBUG_MODE_S2 = false;   // เปิดใช้งาน Debug Mode
-bool debug_flag = true;       // เปิดใช้งานการพิมพ์ข้อมูล Debug
+bool debug_flag = 0;       // เปิดใช้งานการพิมพ์ข้อมูล Debug
 
 
 // การควบคุมหุ่นยนต์
@@ -178,14 +185,22 @@ void setup() {
     pinMode(md1_STBY, OUTPUT);
     pinMode(md1_BIN1, OUTPUT);
     pinMode(md1_BIN2, OUTPUT);
-    pinMode(md1_PWM, OUTPUT);
+    pinMode(md1_PWMA, OUTPUT);
+    pinMode(md1_PWMB, OUTPUT);
+    
 
     pinMode(md2_AIN2, OUTPUT);
     pinMode(md2_AIN1, OUTPUT);
     pinMode(md2_STBY, OUTPUT);
     pinMode(md2_BIN1, OUTPUT);
     pinMode(md2_BIN2, OUTPUT);
-    pinMode(md2_PWM, OUTPUT);
+    pinMode(md2_PWMA, OUTPUT);
+    pinMode(md2_PWMB, OUTPUT);
+
+
+    //Relay pinout
+    pinMode(RELAY1, OUTPUT);
+    pinMode(RELAY2, OUTPUT);
 
     // เปิดใช้งาน STBY ของมอเตอร์เพื่อให้พร้อมทำงาน
     digitalWrite(md1_STBY, HIGH);
@@ -303,14 +318,17 @@ void MotorCoastMode(){
   digitalWrite(md1_AIN2, LOW);
   digitalWrite(md1_BIN1, LOW);
   digitalWrite(md1_BIN2, LOW);
-  analogWrite(md1_PWM, 0);
+  analogWrite(md1_PWMA,0);
+  analogWrite(md1_PWMB,0);
+
 
   // หยุดมอเตอร์ MD2
   digitalWrite(md2_AIN1, LOW);
   digitalWrite(md2_AIN2, LOW);
   digitalWrite(md2_BIN1, LOW);
   digitalWrite(md2_BIN2, LOW);
-  analogWrite(md2_PWM, 0);
+  analogWrite(md2_PWMA,0);
+  analogWrite(md2_PWMB,0);
 }
 
 /**
@@ -333,7 +351,7 @@ void MotorCoastMode(){
  *  - 10: Backward Right (ถอยหลังเฉียงขวา)
  * @param pwm ค่าความเร็วของมอเตอร์ (0-255)
  */
-void moveRobot(uint8_t direc, uint8_t pwm){  
+void moveRobot(uint8_t direc, uint8_t pwmMD1A, uint8_t pwmMD1B,uint8_t pwmMD2A,uint8_t pwmMD2B){  
     switch (direc) {
         case 1:  // Forward
             setMotorDirection(1, 0); setMotorDirection(3, 0);
@@ -360,33 +378,41 @@ void moveRobot(uint8_t direc, uint8_t pwm){
             setMotorDirection(4, 1); setMotorDirection(2, 0);
             break;
         case 7:  // Forward left
-            setMotorDirection(3, 0); setMotorDirection(4, 0);
-            setMotorCoastMode(1); setMotorCoastMode(2);
+            setMotorCoastMode(1);    setMotorDirection(3, 0);
+            setMotorDirection(4, 0); setMotorCoastMode(2);
+            pwmMD1A =0; pwmMD1B = 0;
             break;
         case 8:  // Forward right
-            setMotorDirection(1, 0); setMotorDirection(2, 0);
-            setMotorCoastMode(3); setMotorCoastMode(4);
+            setMotorDirection(1, 0); setMotorCoastMode(3);
+            setMotorCoastMode(4);    setMotorDirection(2, 0);
+            pwmMD2A =0; pwmMD2B = 0;
             break;
         case 9:  // Backward left
-            setMotorDirection(1, 1); setMotorDirection(2, 1);
-            setMotorCoastMode(3); setMotorCoastMode(4);
+            setMotorDirection(1, 1); setMotorCoastMode(3);
+            setMotorCoastMode(4);    setMotorDirection(2, 1);
+            pwmMD2A =0; pwmMD2B = 0;
             break;
         case 10:  // Backward right
-            setMotorDirection(3, 1); setMotorDirection(4, 1);
-            setMotorCoastMode(1); setMotorCoastMode(2);
+            setMotorCoastMode(1);    setMotorDirection(4, 1);
+            setMotorDirection(3, 1); setMotorCoastMode(2);
+            pwmMD1A =0; pwmMD1B = 0;
             break;
         default:
             Serial2.println("Invalid direction command");
             return;
     }
-
     // ตั้งค่า PWM ให้กับมอเตอร์
-    analogWrite(md1_PWM, (direc == 7 || direc == 9) ? 0 : pwm);
-    analogWrite(md2_PWM, (direc == 8 || direc == 10) ? 0 : pwm);
+    // analogWrite(md1_PWM, (direc == 7 || direc == 9) ? 0 : pwm);
+    // analogWrite(md2_PWM, (direc == 8 || direc == 10) ? 0 : pwm);
+
+    analogWrite(md1_PWMA,pwmMD1A);
+    analogWrite(md1_PWMB,pwmMD1B);
+    analogWrite(md2_PWMA,pwmMD2A);
+    analogWrite(md2_PWMB,pwmMD2B);
 
     // Debug
     if(debug_flag){
-        snprintf(debug_buffer, sizeof(debug_buffer),"Direc %d by pwm: %d", direc, pwm);
+        snprintf(debug_buffer, sizeof(debug_buffer),"Direc : %d  pwmA1(FL): %d pwmB1(RR): %d pwmA2(FR): %d pwmB2(RL): %d", direc, pwmMD1A,pwmMD1B,pwmMD2A,pwmMD2B);
         DebugPublish(debug_buffer);
     }
 
@@ -513,12 +539,12 @@ void controlMotors(float vx, float vy, float omega) {
 
     //  ส่งค่าควบคุมมอเตอร์ไปยัง `setMotorPWM()`
     // MD1 - ควบคุมมอเตอร์หน้า-ซ้าย (M1) และหลัง-ขวา (M2)
-    setMotorPWM(wheel_FL, md1_AIN1, md1_AIN2, md1_PWM); // M1 (FL)
-    setMotorPWM(wheel_RR, md1_BIN1, md1_BIN2, md1_PWM); // M2 (RR)
+    setMotorPWM(wheel_FL, md1_AIN1, md1_AIN2, md1_PWMA); // M1 (FL)
+    setMotorPWM(wheel_RR, md1_BIN1, md1_BIN2, md1_PWMB); // M2 (RR)
     
     // MD2 - ควบคุมมอเตอร์หน้า-ขวา (M3) และหลัง-ซ้าย (M4)
-    setMotorPWM(wheel_FR, md2_AIN1, md2_AIN2, md2_PWM); // M3 (FR)
-    setMotorPWM(wheel_RL, md2_BIN1, md2_BIN2, md2_PWM); // M4 (RL)
+    setMotorPWM(wheel_FR, md2_AIN1, md2_AIN2, md2_PWMA); // M3 (FR)
+    setMotorPWM(wheel_RL, md2_BIN1, md2_BIN2, md2_PWMB); // M4 (RL)
 }
 
 /**
@@ -627,9 +653,6 @@ void commandEdit(const std_msgs::UInt32& msg) {
     switch (variable_id) {
         case 0x01: // แก้ไขค่า time_delay
             time_delay = msg.data & 0xFFFFFF; // 24 บิตล่างคือค่าที่ต้องการเปลี่ยน
-            Serial2.print("Updated time_delay to: ");
-            Serial2.println(time_delay);
-
             // ส่ง debug message ไปยัง ROS
             snprintf(debug_buffer, sizeof(debug_buffer), "Updated time_delay to: %d", time_delay);
             DebugPublish(debug_buffer);
@@ -637,70 +660,57 @@ void commandEdit(const std_msgs::UInt32& msg) {
 
         case 0x02: // แก้ไขค่า STEP_SIZE_X (ขนาด step ของ Servo X)
             STEP_SIZE_X = msg.data & 0xFFFFFF;
-            Serial2.print("Updated STEP_SIZE_X to: ");
-            Serial2.println(STEP_SIZE_X);
-
             snprintf(debug_buffer, sizeof(debug_buffer), "Updated STEP_SIZE_X to: %d", STEP_SIZE_X);
             DebugPublish(debug_buffer);
             break;
 
         case 0x03: // แก้ไขค่า STEP_SIZE_Y (ขนาด step ของ Servo Y)
             STEP_SIZE_Y = msg.data & 0xFFFFFF;
-            Serial2.print("Updated STEP_SIZE_Y to: ");
-            Serial2.println(STEP_SIZE_Y);
-
             snprintf(debug_buffer, sizeof(debug_buffer), "Updated STEP_SIZE_Y to: %d", STEP_SIZE_Y);
             DebugPublish(debug_buffer);
             break;
 
         case 0x05: // เปลี่ยนโหมดควบคุมมอเตอร์ (AUTO / MANUAL)
-            uint8_t flag = msg.data & 0xFF; // 24 บิตล่างใช้แทนค่าของโหมด (0 = AUTO, 1 = MANUAL)
+            uint8_t flag_mode = msg.data & 0xFF; // 24 บิตล่างใช้แทนค่าของโหมด (0 = AUTO, 1 = MANUAL)
             
             MotorCoastMode(); // หยุดมอเตอร์ก่อนเปลี่ยนโหมด
 
-            if (flag == 0) {
+            if (flag_mode == 0) {
                 current_mode = AUTO;
-                Serial2.println("Switched to AUTO mode");
-                snprintf(debug_buffer, sizeof(debug_buffer), "Switched to AUTO mode");
-                DebugPublish(debug_buffer);
-            } else if (flag == 1) {
+            } else if (flag_mode == 1) {
                 current_mode = MANUAL;
-                Serial2.println("Switched to MANUAL mode");
-                snprintf(debug_buffer, sizeof(debug_buffer), "Switched to MANUAL mode");
-                DebugPublish(debug_buffer);
             }
+            snprintf(debug_buffer, sizeof(debug_buffer), "Switched to %s mode", flag_mode == 0 ? "AUTO" : "MANUAL");
+            DebugPublish(debug_buffer);
             break;
 
         case 0x06: // เปิด / ปิดโหมด Debug
-            uint8_t flag2 = msg.data & 0xFF;
-            debug_flag = (flag2 == 1);
+            uint8_t flag_debug = msg.data & 0xFF;
+            debug_flag = flag_debug;
             break;
 
         case 0x07: // ขอข้อมูลค่าตัวแปรที่ใช้งานอยู่
-            snprintf(debug_buffer, sizeof(debug_buffer), "Global variable");
+            snprintf(debug_buffer, sizeof(debug_buffer),
+            "{ \"STEP_Servo_X\": %d, \"STEP_Servo_Y\": %d, \"debug_flag\": %d, \"time_delay\": %d }",
+            STEP_SIZE_X, STEP_SIZE_Y, debug_flag, time_delay);
             DebugPublish(debug_buffer);
-
-            snprintf(debug_buffer, sizeof(debug_buffer), "STEP_Servo_X : %d", STEP_SIZE_X);
-            DebugPublish(debug_buffer);
-
-            snprintf(debug_buffer, sizeof(debug_buffer), "STEP_Servo_Y : %d", STEP_SIZE_Y);
-            DebugPublish(debug_buffer);
-
-            snprintf(debug_buffer, sizeof(debug_buffer), "debug_flag : %d", debug_flag);
-            DebugPublish(debug_buffer);
-
-            snprintf(debug_buffer, sizeof(debug_buffer), "time_delay motor : %d", time_delay);
-            DebugPublish(debug_buffer);
+            break;
+        case 0x07://relay
+            uint8_t flag_relay = msg.data & 0xFF;
+            switch (flag_relay) {
+                case 0x00: digitalWrite(RELAY1, LOW); break;
+                case 0x01: digitalWrite(RELAY1, HIGH); break;
+                case 0x02: digitalWrite(RELAY2, LOW); break;
+                case 0x03: digitalWrite(RELAY2, HIGH); break;
+                default: Serial2.println("Invalid relay command"); break;
+            }
             break;
 
         default: // กรณีที่ได้รับคำสั่งที่ไม่รู้จัก
-            Serial2.print("Invalid command edit ID: ");
-            Serial2.println(variable_id);
-
             snprintf(debug_buffer, sizeof(debug_buffer), "Invalid command edit ID: %d", variable_id);
             DebugPublish(debug_buffer);
             break;
-    }
+      }
 }
 
 /**
@@ -721,17 +731,17 @@ void commandEdit(const std_msgs::UInt32& msg) {
  *
  * @note ถ้า `current_mode != MANUAL` ฟังก์ชันนี้จะไม่ทำงาน
  */
-void DriveCallback(const std_msgs::UInt16& msg) {
+void DriveCallback(const std_msgs::UInt16& dirve_msg) {
     // ตรวจสอบว่าอยู่ในโหมด Manual เท่านั้น
     if (current_mode == MANUAL) {
         // Debug แสดงข้อมูลที่ได้รับ
 
         // แยกข้อมูลเป็นทิศทาง (direction) และค่าความเร็ว (PWM)
-        uint8_t direction = (msg.data >> 8) & 0xFF;  // ดึง 8 บิตแรก (MSB) เป็นทิศทาง
-        uint8_t pwm = msg.data & 0xFF;               // ดึง 8 บิตหลัง (LSB) เป็นค่า PWM
+        uint8_t direction = (dirve_msg.data >> 8) & 0xFF;  // ดึง 8 บิตแรก (MSB) เป็นทิศทาง
+        uint8_t pwm = dirve_msg.data & 0xFF;               // ดึง 8 บิตหลัง (LSB) เป็นค่า PWM
 
         // ส่งคำสั่งไปยังฟังก์ชันควบคุมหุ่นยนต์
-        moveRobot(direction, pwm);
+        moveRobot(direction, pwm,pwm,pwm,pwm);
 
         // อัปเดตสถานะว่ามอเตอร์กำลังทำงาน
         motor_running = true;
@@ -745,6 +755,7 @@ void DebugPublish(const char* data){
   if(debug_flag){
     debug_msgs.data = (char *)data;
     debug_pub.publish(&debug_msgs);
+    Serial2.println(debug_msgs.data);// and serial2 debug
   }
 }
 
@@ -785,8 +796,6 @@ void processReceivedCommand(const char* received) {
     }
 }
 
-
-
 /**
  * @brief อ่านข้อมูลจาก MPU6050 และเผยแพร่เป็น ROS IMU Message
  * 
@@ -796,6 +805,7 @@ void processReceivedCommand(const char* received) {
  * - อ่านค่า Quaternion และคำนวณค่ามุม yaw, pitch, roll
  * - อ่านค่าความเร่ง (Accelerometer) และอัตราการหมุน (Gyroscope)
  * - แปลงค่าที่ได้ให้อยู่ในหน่วยที่เหมาะสม
+ * - normalizeQuaternion
  * - เผยแพร่ข้อมูลไปยัง ROS Topic `imu/data_raw`
  */
 void readIMU() {
@@ -848,8 +858,31 @@ void readIMU() {
         imu_msg.angular_velocity.y = (gy / gyroScale) * (PI / 180.0);
         imu_msg.angular_velocity.z = (gz / gyroScale) * (PI / 180.0);
 
+        
+        normalizeQuaternion(imu_msg);
         // ส่งข้อมูลไปยัง ROS Topic
         imu_raw_pub.publish(&imu_msg);
+    }
+}
+
+
+/**
+ * @brief Normalize Quaternion จาก MPU6050
+ * 
+ * @details 
+ * - ทำให้ quaternion ใน Imu &msg มีความยาว (magnitude) เท่ากับ 1
+ */
+void normalizeQuaternion(sensor_msgs::Imu &msg) {
+    float norm = sqrt(msg.orientation.x * msg.orientation.x +
+                      msg.orientation.y * msg.orientation.y +
+                      msg.orientation.z * msg.orientation.z +
+                      msg.orientation.w * msg.orientation.w);
+
+    if (norm > 0.0) {  // ป้องกันการหารด้วย 0
+        msg.orientation.x /= norm;
+        msg.orientation.y /= norm;
+        msg.orientation.z /= norm;
+        msg.orientation.w /= norm;
     }
 }
 
