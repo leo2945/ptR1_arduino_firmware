@@ -25,22 +25,39 @@
 #define PRESCALER 1024  // ค่าแบ่งสัญญาณของ Timer
 
 // การกำหนดพินของมอเตอร์ไดรเวอร์ (Motor Driver)
-#define md1_AIN2 35  // มอเตอร์ M1 (FL) - ขา IN2
-#define md1_AIN1 37  // มอเตอร์ M1 (FL) - ขา IN1
-#define md1_BIN1 41  // มอเตอร์ M2 (RR) - ขา IN1
-#define md1_BIN2 43  // มอเตอร์ M2 (RR) - ขา IN2
-#define md1_STBY 39  // ขาสำหรับเปิดใช้งานมอเตอร์ (STBY)
-#define md1_PWMA 12   // PWMA control for MD1
-#define md1_PWMB 13   // PWMB control for MD1
+#define md1_AIN2 35
+#define md1_AIN1 37
+#define md1_BIN1 41
+#define md1_BIN2 43
+#define md1_STBY 39
+#define md1_PWMA 12 
+#define md1_PWMB 13
 
-#define md2_AIN2 42  // มอเตอร์ M3 (FR) - ขา IN2
-#define md2_AIN1 40  // มอเตอร์ M3 (FR) - ขา IN1
-#define md2_BIN1 36  // มอเตอร์ M4 (RL) - ขา IN1
-#define md2_BIN2 34  // มอเตอร์ M4 (RL) - ขา IN2
-#define md2_PWMA 10   // PWMA control for MD2
-#define md2_PWMB 11   // PWMB control for MD2
+#define md2_AIN2 42
+#define md2_AIN1 40
+#define md2_BIN1 36
+#define md2_BIN2 34
+#define md2_PWMA 10
+#define md2_PWMB 11
 
 #define md2_STBY 38  // ขาสำหรับเปิดใช้งานมอเตอร์ (STBY)
+
+// Wheels mapping 
+#define FL_IN1 md1_AIN1
+#define FL_IN2 md1_AIN2
+#define FL_PWM md1_PWMA
+
+#define FR_IN1 md1_BIN1
+#define FR_IN2 md1_BIN2
+#define FR_PWM md1_PWMB
+
+#define RL_IN1 md2_AIN1
+#define RL_IN2 md2_AIN2
+#define RL_PWM md2_PWMA
+
+#define RR_IN1 md2_BIN1
+#define RR_IN2 md2_BIN2
+#define RR_PWM md2_PWMB
 
 #define RELAY1 33    // pin relay 1
 #define RELAY2 33    // pin relay 2
@@ -226,7 +243,7 @@ void setup() {
         Serial2.println(")");
     }
 
-    // ตั้งค่าและทดสอบ Compass (QMC5883L)
+    // ตั้งค่าและทดสอบ Compa ss (QMC5883L)
     Wire.beginTransmission(QMC5883L_ADDRESS);
     if (Wire.endTransmission() == 0) {
         Serial2.println("Compass detected");
@@ -314,29 +331,30 @@ void loop() {
  */
 void MotorCoastMode(){
   // หยุดมอเตอร์ MD1
-  digitalWrite(md1_AIN1, LOW);
-  digitalWrite(md1_AIN2, LOW);
-  digitalWrite(md1_BIN1, LOW);
-  digitalWrite(md1_BIN2, LOW);
-  analogWrite(md1_PWMA,0);
-  analogWrite(md1_PWMB,0);
+  digitalWrite(FL_IN1, LOW);
+  digitalWrite(FL_IN2, LOW);
+  analogWrite(FL_PWM,0);
+
+  digitalWrite(FR_IN1, LOW);
+  digitalWrite(FR_IN2, LOW);
+  analogWrite(FR_PWM,0);
 
 
   // หยุดมอเตอร์ MD2
-  digitalWrite(md2_AIN1, LOW);
-  digitalWrite(md2_AIN2, LOW);
-  digitalWrite(md2_BIN1, LOW);
-  digitalWrite(md2_BIN2, LOW);
-  analogWrite(md2_PWMA,0);
-  analogWrite(md2_PWMB,0);
+  digitalWrite(RL_IN1, LOW);
+  digitalWrite(RL_IN2, LOW);
+  analogWrite(RL_PWM,0);
+
+  digitalWrite(RR_IN1, LOW);
+  digitalWrite(RR_IN2, LOW);
+  analogWrite(RR_PWM,0);
 }
 
 /**
  * @brief ควบคุมการเคลื่อนที่ของหุ่นยนต์ Mecanum
  * 
  * ฟังก์ชันนี้ใช้กำหนดทิศทางและความเร็วของหุ่นยนต์โดยอ้างอิงจาก
- * หมายเลขมอเตอร์ที่ตั้งค่าไว้ (FL(M1), FR(M3), RL(M4), RR(M2)) และปรับความเร็วโดยใช้ PWM
- * Mx : Motorx,  FL : Font Left , FR : Font Right , RL : Rear Left , RR : Rear Right
+ * หมายเลขมอเตอร์ที่ตั้งค่าไว้ (FL(M1), FR(M2), RL(M3), RR(M4)) และปรับความเร็วโดยใช้ PWM
  *
  * @param direction ทิศทางการเคลื่อนที่ของหุ่นยนต์ (1-10)
  *  - 1: Forward (เดินหน้า)
@@ -349,89 +367,88 @@ void MotorCoastMode(){
  *  - 8: Forward Right (เดินหน้าเฉียงขวา)
  *  - 9: Backward Left (ถอยหลังเฉียงซ้าย)
  *  - 10: Backward Right (ถอยหลังเฉียงขวา)
- * @param pwm ค่าความเร็วของมอเตอร์ (0-255)
+ * @param pwmMD1A ค่าความเร็วของมอเตอร์ FL (0-255)
+ * @param pwmMD1B ค่าความเร็วของมอเตอร์ FR (0-255)
+ * @param pwmMD2A ค่าความเร็วของมอเตอร์ RL (0-255)
+ * @param pwmMD2B ค่าความเร็วของมอเตอร์ RR (0-255)
  */
-void moveRobot(uint8_t direc, uint8_t pwmMD1A, uint8_t pwmMD1B,uint8_t pwmMD2A,uint8_t pwmMD2B){  
+void moveRobot(uint8_t direc, uint8_t pwmMD1A, uint8_t pwmMD1B, uint8_t pwmMD2A, uint8_t pwmMD2B) {
     switch (direc) {
         case 1:  // Forward
-            setMotorDirection(1, 0); setMotorDirection(3, 0);
-            setMotorDirection(4, 0); setMotorDirection(2, 0);
+            setMotorDirection(1, 0); setMotorDirection(2, 0);
+            setMotorDirection(3, 0); setMotorDirection(4, 0);
             break;
         case 2:  // Left
-            setMotorDirection(1, 1); setMotorDirection(3, 0);
-            setMotorDirection(4, 0); setMotorDirection(2, 1);
+            setMotorDirection(1, 1); setMotorDirection(2, 0);
+            setMotorDirection(3, 0); setMotorDirection(4, 1);
             break;
         case 3:  // Right
-            setMotorDirection(1, 0); setMotorDirection(3, 1);
-            setMotorDirection(4, 1); setMotorDirection(2, 0);
+            setMotorDirection(1, 0); setMotorDirection(2, 1);
+            setMotorDirection(3, 1); setMotorDirection(4, 0);
             break;
         case 4:  // Backward
-            setMotorDirection(1, 1); setMotorDirection(3, 1);
-            setMotorDirection(4, 1); setMotorDirection(2, 1);
+            setMotorDirection(1, 1); setMotorDirection(2, 1);
+            setMotorDirection(3, 1); setMotorDirection(4, 1);
             break;
-        case 5:  // Turn left
-            setMotorDirection(1, 1); setMotorDirection(3, 0);
-            setMotorDirection(4, 0); setMotorDirection(2, 1);
+        case 5:  // Turn Left
+            setMotorDirection(1, 1); setMotorDirection(2, 0);
+            setMotorDirection(3, 1); setMotorDirection(4, 0);
             break;
-        case 6:  // Turn right
-            setMotorDirection(1, 0); setMotorDirection(3, 1);
-            setMotorDirection(4, 1); setMotorDirection(2, 0);
+        case 6:  // Turn Right
+            setMotorDirection(1, 0); setMotorDirection(2, 1);
+            setMotorDirection(3, 0); setMotorDirection(4, 1);
             break;
-        case 7:  // Forward left
-            setMotorCoastMode(1);    setMotorDirection(3, 0);
-            setMotorDirection(4, 0); setMotorCoastMode(2);
-            pwmMD1A =0; pwmMD1B = 0;
+        case 7:  // Forward Left
+            setMotorCoastMode(1);    // FL
+            setMotorDirection(2, 0); // FR
+            setMotorDirection(3, 0); // RL
+            setMotorCoastMode(4);    // RR
+            pwmMD1A = 0;
+            pwmMD2B = 0;
             break;
-        case 8:  // Forward right
-            setMotorDirection(1, 0); setMotorCoastMode(3);
-            setMotorCoastMode(4);    setMotorDirection(2, 0);
-            pwmMD2A =0; pwmMD2B = 0;
+        case 8:  // Forward Right
+            setMotorDirection(1, 0); // FL
+            setMotorCoastMode(2);    // FR
+            setMotorCoastMode(3);    // RL
+            setMotorDirection(4, 0); // RR
+            pwmMD1B = 0;
+            pwmMD2A = 0;
             break;
-        case 9:  // Backward left
-            setMotorDirection(1, 1); setMotorCoastMode(3);
-            setMotorCoastMode(4);    setMotorDirection(2, 1);
-            pwmMD2A =0; pwmMD2B = 0;
+
+        case 9:  // Backward Left
+            setMotorCoastMode(1);    // FL
+            setMotorDirection(2, 1); // FR
+            setMotorDirection(3, 1); // RL
+            setMotorCoastMode(4);    // RR
+            pwmMD1A = 0;
+            pwmMD2B = 0;
             break;
-        case 10:  // Backward right
-            setMotorCoastMode(1);    setMotorDirection(4, 1);
-            setMotorDirection(3, 1); setMotorCoastMode(2);
-            pwmMD1A =0; pwmMD1B = 0;
+
+        case 10:  // Backward Right
+            setMotorDirection(1, 1); // FL
+            setMotorCoastMode(2);    // FR
+            setMotorCoastMode(3);    // RL
+            setMotorDirection(4, 1); // RR
+            pwmMD1B = 0;
+            pwmMD2A = 0;
             break;
         default:
             Serial2.println("Invalid direction command");
             return;
     }
-    // ตั้งค่า PWM ให้กับมอเตอร์
-    // analogWrite(md1_PWM, (direc == 7 || direc == 9) ? 0 : pwm);
-    // analogWrite(md2_PWM, (direc == 8 || direc == 10) ? 0 : pwm);
 
-    analogWrite(md1_PWMA,pwmMD1A);
-    analogWrite(md1_PWMB,pwmMD1B);
-    analogWrite(md2_PWMA,pwmMD2A);
-    analogWrite(md2_PWMB,pwmMD2B);
+    // ตั้งค่า PWM ให้กับมอเตอร์
+    analogWrite(FL_PWM, pwmMD1A); // M1 = FL
+    analogWrite(FR_PWM, pwmMD1B); // M2 = FR
+    analogWrite(RL_PWM, pwmMD2A); // M3 = RL
+    analogWrite(RR_PWM, pwmMD2B); // M4 = RR
 
     // Debug
-    if(debug_flag){
-        snprintf(debug_buffer, sizeof(debug_buffer),"Direc : %d  pwmA1(FL): %d pwmB1(RR): %d pwmA2(FR): %d pwmB2(RL): %d", direc, pwmMD1A,pwmMD1B,pwmMD2A,pwmMD2B);
+    if (debug_flag) {
+        snprintf(debug_buffer, sizeof(debug_buffer),
+                 "Direc: %d FL(PWM1A):%d FR(PWM1B):%d RL(PWM2A):%d RR(PWM2B):%d",
+                 direc, pwmMD1A, pwmMD1B, pwmMD2A, pwmMD2B);
         DebugPublish(debug_buffer);
-    }
-
-    if(DEBUG_MODE_S2){
-        const char* message;
-        switch(direc) {
-            case 1: message = "1: Forward"; break;
-            case 2: message = "2: Left"; break;
-            case 3: message = "3: Right"; break;
-            case 4: message = "4: Backward"; break;
-            case 5: message = "5: Turn Left"; break;
-            case 6: message = "6: Turn Right"; break;
-            case 7: message = "7: Forward Left"; break;
-            case 8: message = "8: Forward Right"; break;
-            case 9: message = "9: Backward Left"; break;
-            case 10: message = "10: Backward Right"; break;
-            default: message = "Invalid direction"; break;
-        }
-        Serial2.println(message);
     }
 }
 
@@ -443,10 +460,10 @@ void setMotorCoastMode(uint8_t motorNum) {
     int in1, in2;
     
     switch (motorNum) {
-        case 1: in1 = md1_AIN1; in2 = md1_AIN2; break;
-        case 2: in1 = md1_BIN1; in2 = md1_BIN2; break;
-        case 3: in1 = md2_AIN1; in2 = md2_AIN2; break;
-        case 4: in1 = md2_BIN1; in2 = md2_BIN2; break;
+        case 1: in1 = FL_IN1; in2 = FL_IN2; break;
+        case 2: in1 = FR_IN1; in2 = FR_IN2; break;
+        case 3: in1 = RL_IN1; in2 = RL_IN2; break;
+        case 4: in1 = RR_IN1; in2 = RR_IN2; break;
         default: return;
     }
 
@@ -463,10 +480,10 @@ void setMotorDirection(uint8_t motorNum, bool direction) {
     int in1, in2;
     
     switch (motorNum) {
-        case 1: in1 = md1_AIN1; in2 = md1_AIN2; break;
-        case 2: in1 = md1_BIN1; in2 = md1_BIN2; break;
-        case 3: in1 = md2_AIN1; in2 = md2_AIN2; break;
-        case 4: in1 = md2_BIN1; in2 = md2_BIN2; break;
+        case 1: in1 = FL_IN1; in2 = FL_IN2; break;
+        case 2: in1 = FR_IN1; in2 = FR_IN2; break;
+        case 3: in1 = RL_IN1; in2 = RL_IN2; break;
+        case 4: in1 = RR_IN1; in2 = RR_IN2; break;
         default: return;
     }
 
@@ -538,13 +555,13 @@ void controlMotors(float vx, float vy, float omega) {
     }
 
     //  ส่งค่าควบคุมมอเตอร์ไปยัง `setMotorPWM()`
-    // MD1 - ควบคุมมอเตอร์หน้า-ซ้าย (M1) และหลัง-ขวา (M2)
-    setMotorPWM(wheel_FL, md1_AIN1, md1_AIN2, md1_PWMA); // M1 (FL)
-    setMotorPWM(wheel_RR, md1_BIN1, md1_BIN2, md1_PWMB); // M2 (RR)
+    // MD1 - ควบคุมมอเตอร์หน้า-ซ้าย (M1) และหน้า-ขวา (M2)
+    setMotorPWM(wheel_FL, FL_IN1, FL_IN2, FL_PWM);  // M1 - FL
+    setMotorPWM(wheel_FR, FR_IN1, FR_IN1, FR_PWM);  // M2 - FR
     
-    // MD2 - ควบคุมมอเตอร์หน้า-ขวา (M3) และหลัง-ซ้าย (M4)
-    setMotorPWM(wheel_FR, md2_AIN1, md2_AIN2, md2_PWMA); // M3 (FR)
-    setMotorPWM(wheel_RL, md2_BIN1, md2_BIN2, md2_PWMB); // M4 (RL)
+    // MD2 - ควบคุมมอเตอร์หลัง-ซ้าย (M3) และหลัง-ขวา (M4)
+    setMotorPWM(wheel_RL, RL_IN1, RL_IN2, RL_PWM);  // M3 - RL
+    setMotorPWM(wheel_RR, RR_IN1, RR_IN2, RR_PWM);  // M4 - RR
 }
 
 /**

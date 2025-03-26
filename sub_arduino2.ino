@@ -19,12 +19,12 @@ bool DEBUG_MODE = 0;
 
 
 /*
-   M1(FL)-----M3(FR)
+   M1(FL)-----M2(FR)
      |          |
      |          |
      |          | 
      |          |     
-   M4(RL)-----M4(RR)
+   M3(RL)-----M4(RR)
 */
 
 
@@ -111,7 +111,7 @@ void loop() {
         long deltaM3 = movingAverage(counterM3 - prevM3, filterArrayM3, indexM3, countM3);
         long deltaM4 = movingAverage(counterM4 - prevM4, filterArrayM4, indexM4, countM4);
 
-        calculateOdometry(deltaM1, deltaM4, deltaM3, deltaM2, vx, vy, omega, dt_sec);
+        calculateOdometry(deltaM1, deltaM2, deltaM4, deltaM3, vx, vy, omega, dt_sec);
 
         vx = filterVelocity(vx, prev_vx, 0.7);
         vy = filterVelocity(vy, prev_vy, 0.7);
@@ -151,27 +151,29 @@ void loop() {
 
 /**
  * @brief คำนวณ Odometry ของหุ่นยนต์ที่ใช้ล้อ Mecanum โดยใช้ข้อมูล Encoder
- * @param dL1 จำนวนพัลส์ที่อ่านได้จาก Encoder ของล้อหน้า-ซ้าย (Front Left - FL)
- * @param dR1 จำนวนพัลส์ที่อ่านได้จาก Encoder ของล้อหน้า-ขวา (Front Right - FR)
- * @param dR2 จำนวนพัลส์ที่อ่านได้จาก Encoder ของล้อหลัง-ขวา (Rear Right - RR)
- * @param dL2 จำนวนพัลส์ที่อ่านได้จาก Encoder ของล้อหลัง-ซ้าย (Rear Left - RL)
- * @param vx (output) ความเร็วเชิงเส้นตามแกน x (m/s)
- * @param vy (output) ความเร็วเชิงเส้นตามแกน y (m/s)
- * @param omega (output) ความเร็วเชิงมุมของหุ่นยนต์ (rad/s)
- * @param dt_sec เวลาที่ผ่านไปในวินาที (ใช้คำนวณความเร็วจาก Encoder)
+ * 
+ * @param dFL จำนวนพัลส์จากล้อหน้า-ซ้าย (Front Left)
+ * @param dFR จำนวนพัลส์จากล้อหน้า-ขวา (Front Right)
+ * @param dRR จำนวนพัลส์จากล้อหลัง-ขวา (Rear Right)
+ * @param dRL จำนวนพัลส์จากล้อหลัง-ซ้าย (Rear Left)
+ * @param vx ความเร็วในแกน X (เชิงเส้น)
+ * @param vy ความเร็วในแกน Y (Strafing)
+ * @param omega ความเร็วเชิงมุม (Yaw)
+ * @param dt_sec ระยะเวลา (วินาที)
  */
-void calculateOdometry(long dL1, long dR1, long dR2, long dL2, float &vx, float &vy, float &omega, float dt_sec) {
+void calculateOdometry(long dFL, long dFR, long dRR, long dRL, float &vx, float &vy, float &omega, float dt_sec) {
     // คำนวณอัตราการหมุนของล้อแต่ละตัว (rad/s)
-    float w_FL = (dL1 / PPR_M1) * 2 * PI / dt_sec;  // Front Left (FL)
-    float w_FR = (dR1 / PPR_M3) * 2 * PI / dt_sec;  // Front Right (FR)
-    float w_RR = (dR2 / PPR_M2) * 2 * PI / dt_sec;  // Rear Right (RR)
-    float w_RL = (dL2 / PPR_M4) * 2 * PI / dt_sec;  // Rear Left (RL)
+    float w_FL = (dFL / PPR_M1) * 2 * PI / dt_sec;  // M1 = FL
+    float w_FR = (dFR / PPR_M2) * 2 * PI / dt_sec;  // M2 = FR
+    float w_RR = (dRR / PPR_M4) * 2 * PI / dt_sec;  // M4 = RR
+    float w_RL = (dRL / PPR_M3) * 2 * PI / dt_sec;  // M3 = RL
 
     // คำนวณความเร็วเชิงเส้น vx, vy และความเร็วเชิงมุม omega
-    vx = (r / 4) * (w_FL + w_FR + w_RL + w_RR);           // ความเร็วแกน X
-    vy = (r / 4) * (-w_FL + w_FR + w_RL - w_RR);          // ความเร็วแกน Y (Strafing)
-    omega = (r / (4 * (l + w))) * (-w_FL + w_FR - w_RL + w_RR); // ความเร็วเชิงมุม (Yaw rate)
+    vx    = (r / 4.0) * (w_FL + w_FR + w_RL + w_RR);                            // ความเร็วแกน X
+    vy    = (r / 4.0) * (-w_FL + w_FR + w_RL - w_RR);                           // ความเร็วแกน Y
+    omega = (r / (4.0 * (l + w))) * (-w_FL + w_FR - w_RL + w_RR);              // ความเร็วเชิงมุม
 }
+
 
 
 /**
