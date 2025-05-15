@@ -1,20 +1,33 @@
 #include <PinChangeInterrupt.h>  // ใช้สำหรับสร้าง Interrupt บนขาดิจิทัลที่ไม่ใช่ขา Interrupt เพื่อใช้กับ encoder 4 ตัว
 #include <ros.h>
 #include <geometry_msgs/Twist.h>
+#include <std_msgs/Bool.h>
+
 
 // Encoder Pin Definitions
-#define ENCODER1_PIN_A 11  // PORTB4
-#define ENCODER1_PIN_B 12  // PORTB2
-#define ENCODER2_PIN_A 7   // PORTD7
-#define ENCODER2_PIN_B 10  // PORTB3
-#define ENCODER3_PIN_A 5   // PORTD5
-#define ENCODER3_PIN_B 6   // PORTD6
-#define ENCODER4_PIN_A 3   // PORTD3
-#define ENCODER4_PIN_B 4   // PORTD4
+// FL == M1
+#define ENCODER1_PIN_A 10  // PORTB4   (D11)
+#define ENCODER1_PIN_B 11  // PORTB3   (D10)
+
+// FR == M2
+#define ENCODER2_PIN_A 5   // PORTD5   (D5)
+#define ENCODER2_PIN_B 6   // PORTD6   (D6)
+
+// RL == M3
+#define ENCODER3_PIN_A 3   // PORTD3   (D3)
+#define ENCODER3_PIN_B 4   // PORTD4   (D4)
+
+// RR == M4
+#define ENCODER4_PIN_A 7   // PORTD7   (D7)
+#define ENCODER4_PIN_B 12  // PORTB2   (D12)
+
+
+
+
 #define LOOP_INTERVAL 20  // 20 ms = 50 Hz
 
 
-const int FILTER_SIZE = 3;
+const int FILTER_SIZE = 5;
 bool DEBUG_MODE = 0;
 
 
@@ -29,22 +42,22 @@ bool DEBUG_MODE = 0;
 
 
 // Threshold and Limits
-#define MAX_POSITION 1000000  
-#define BAUD_RATE 57000
+#define MAX_POSITION 1000  
+#define BAUD_RATE 57600
 
 // Robot variable
   float r = 0.04;  // รัศมีล้อ (เมตร)
-  float l = 0.085;   // ระยะจากศูนย์กลางถึงล้อหน้า/หลัง (เมตร)
-  float w = 0.105;  // ระยะจากศูนย์กลางถึงล้อซ้าย/ขวา (เมตร)
+  float l2 = 0.0825;   // ระยะจากศูนย์กลางถึงล้อหน้า/หลัง (เมตร)
+  float l1 = 0.1075;  // ระยะจากศูนย์กลางถึงล้อซ้าย/ขวา (เมตร)
   float dt_sec = 0.02;  // รอบเวลา (วินาที)
 
 // Encoder Variables
   volatile long counterM1 = 0, counterM2 = 0, counterM3 = 0, counterM4 = 0;
   long prevM1 = 0, prevM2 = 0, prevM3 = 0, prevM4 = 0;
-  const float PPR_M1 PROGMEM = 660;
-  const float PPR_M2 PROGMEM = 660;
-  const float PPR_M3 PROGMEM = 660;
-  const float PPR_M4 PROGMEM = 660;
+  const float PPR_M1  = 660;
+  const float PPR_M2  = 660;
+  const float PPR_M3  = 660;
+  const float PPR_M4  = 660;
   volatile bool prevA1 = 0;
   volatile bool prevA2 = 0;
   volatile bool prevA3 = 0;
@@ -66,10 +79,19 @@ bool DEBUG_MODE = 0;
   float prev_vx = 0, prev_vy = 0, prev_omega = 0;
   float vx = 0, vy = 0, omega = 0;
 
+//still
+    unsigned long last_pub_still = 0;
+    const unsigned long PUB_INTERVAL_STILL = 250; // ms (1Hz)
+    bool last_isStill = true;
 
 ros::NodeHandle nh;
 geometry_msgs::Twist vel_msg;
 ros::Publisher vel_pub("/robot_velocity", &vel_msg);
+
+std_msgs::Bool is_still_msg;
+ros::Publisher is_still_pub("is_still", &is_still_msg);
+
+
 
 //interrupt vaiable
 volatile byte a1, b1, a2, b2, a3, b3, a4, b4;
@@ -78,9 +100,11 @@ unsigned long last_time = 0;
 
 void setup() {
     Serial.begin(BAUD_RATE);
-
+    delay(100); 
     nh.initNode();
     nh.advertise(vel_pub);
+    nh.advertise(is_still_pub);
+
 
     pinMode(ENCODER1_PIN_A, INPUT_PULLUP);
     pinMode(ENCODER1_PIN_B, INPUT_PULLUP);
@@ -93,12 +117,17 @@ void setup() {
 
     attachPCINT(digitalPinToPCINT(ENCODER1_PIN_A), counterM1_ISR, CHANGE);
     attachPCINT(digitalPinToPCINT(ENCODER1_PIN_B), counterM1_ISR, CHANGE);
+
     attachPCINT(digitalPinToPCINT(ENCODER2_PIN_A), counterM2_ISR, CHANGE);
     attachPCINT(digitalPinToPCINT(ENCODER2_PIN_B), counterM2_ISR, CHANGE);
+
     attachPCINT(digitalPinToPCINT(ENCODER3_PIN_A), counterM3_ISR, CHANGE);
     attachPCINT(digitalPinToPCINT(ENCODER3_PIN_B), counterM3_ISR, CHANGE);
+    
     attachPCINT(digitalPinToPCINT(ENCODER4_PIN_A), counterM4_ISR, CHANGE);
     attachPCINT(digitalPinToPCINT(ENCODER4_PIN_B), counterM4_ISR, CHANGE);
+
+
 
 }
 
@@ -106,6 +135,7 @@ void loop() {
     unsigned long current_time = millis();
 
     if (current_time - last_time >= LOOP_INTERVAL) {  // ตรวจสอบช่วงเวลา 20 ms
+        debugPrint();
         long deltaM1 = movingAverage(counterM1 - prevM1, filterArrayM1, indexM1, countM1);
         long deltaM2 = movingAverage(counterM2 - prevM2, filterArrayM2, indexM2, countM2);
         long deltaM3 = movingAverage(counterM3 - prevM3, filterArrayM3, indexM3, countM3);
@@ -113,9 +143,30 @@ void loop() {
 
         calculateOdometry(deltaM1, deltaM2, deltaM4, deltaM3, vx, vy, omega, dt_sec);
 
-        vx = filterVelocity(vx, prev_vx, 0.7);
-        vy = filterVelocity(vy, prev_vy, 0.7);
-        omega = filterVelocity(omega, prev_omega, 0.7);
+        bool isStill = abs(deltaM1) < 2 &&
+               abs(deltaM2) < 2 &&
+               abs(deltaM3) < 2 &&
+               abs(deltaM4) < 2;
+        if (isStill != last_isStill || (current_time - last_pub_still > PUB_INTERVAL_STILL)) {
+            is_still_msg.data = isStill;
+            is_still_pub.publish(&is_still_msg);
+            last_isStill = isStill;
+            last_pub_still = current_time;
+        }
+
+        if (isStill) {
+            vx = 0;
+            vy = 0;
+            omega = 0;
+            resetFilter(filterArrayM1, indexM1, countM1);
+            resetFilter(filterArrayM2, indexM2, countM2);
+            resetFilter(filterArrayM3, indexM3, countM3);
+            resetFilter(filterArrayM4, indexM4, countM4);
+        } else {
+            vx = filterVelocity(vx, prev_vx, 0.7);
+            vy = filterVelocity(vy, prev_vy, 0.7);
+            omega = filterVelocity(omega, prev_omega, 0.7);
+        }
 
         prev_vx = vx;
         prev_vy = vy;
@@ -133,6 +184,8 @@ void loop() {
 
 
         last_time = current_time;  // อัปเดตเวลา
+
+
     }
 
     checkAndResetEncoder(counterM1);
@@ -146,6 +199,12 @@ void loop() {
       nh.spinOnce();
       lastSpinTime = current_time;
     }
+}
+
+void resetFilter(long* buffer, int& index, int& count) {
+  for (int i = 0; i < FILTER_SIZE; i++) buffer[i] = 0;
+  index = 0;
+  count = 0;
 }
 
 
@@ -171,7 +230,7 @@ void calculateOdometry(long dFL, long dFR, long dRR, long dRL, float &vx, float 
     // คำนวณความเร็วเชิงเส้น vx, vy และความเร็วเชิงมุม omega
     vx    = (r / 4.0) * (w_FL + w_FR + w_RL + w_RR);                            // ความเร็วแกน X
     vy    = (r / 4.0) * (-w_FL + w_FR + w_RL - w_RR);                           // ความเร็วแกน Y
-    omega = (r / (4.0 * (l + w))) * (-w_FL + w_FR - w_RL + w_RR);              // ความเร็วเชิงมุม
+    omega = (r / (4.0 * (l1 + l2))) * (-w_FL + w_FR - w_RL + w_RR);             // ความเร็วเชิงมุม
 }
 
 
@@ -194,65 +253,55 @@ void checkAndResetEncoder(volatile long &encoderCount) {
     }
 }
 
-/**
- * @brief ISR สำหรับมอเตอร์ M1 (Front Left, FL)
- * ใช้ขา D12 (PB4) และ D10 (PB2) สำหรับอ่านสัญญาณจาก Encoder
- */
-void counterM1_ISR() { 
-    a1 = (PINB & (1 << PB4)); // อ่านค่าจากขา D12 (PB4)
-    b1 = (PINB & (1 << PB2)); // อ่านค่าจากขา D10 (PB2)
+// M1 = Front Left = D11 (PB4), D12 (PB2)
+    void counterM1_ISR() {
+    a1 = (PINB >> PB4) & 1;
+    b1 = (PINB >> PB3) & 1;
 
-    if (a1 != prevA1) {  // ตรวจจับการเปลี่ยนแปลงของสัญญาณ A1
-        if (a1 ^ b1) { counterM1++; } // หมุนตามเข็มนาฬิกา (CW)
-        else { counterM1--; } // หมุนทวนเข็มนาฬิกา (CCW)
+    if (a1 != prevA1) {
+        if (a1 ^ b1) counterM1--;
+        else         counterM1++;
     }
-    prevA1 = a1; // อัปเดตสถานะก่อนหน้า
-}
-
-/**
- * @brief ISR สำหรับมอเตอร์ M2 (Rear Right, RR)
- * ใช้ขา D7 (PD7) และ D10 (PB2) สำหรับอ่านสัญญาณจาก Encoder
- */
-void counterM2_ISR() { 
-    a2 = (PIND & (1 << PD7)); // อ่านค่าจากขา D7 (PD7)
-    b2 = (PINB & (1 << PB2)); // **ตรวจสอบให้แน่ใจว่าใช้ขาที่ถูกต้อง**
-
-    if (a2 != prevA2) {  // ตรวจจับการเปลี่ยนแปลงของสัญญาณ A2
-        if (a2 ^ b2) { counterM2++; }  
-        else { counterM2--; }  
+    prevA1 = a1;
     }
-    prevA2 = a2; // อัปเดตสถานะก่อนหน้า
-}
 
-/**
- * @brief ISR สำหรับมอเตอร์ M3 (Front Right, FR)
- * ใช้ขา D5 (PD5) และ D6 (PD6) สำหรับอ่านสัญญาณจาก Encoder
- */
-void counterM3_ISR() { 
-    a3 = (PIND & (1 << PD5)); // อ่านค่าจากขา D5 (PD5)
-    b3 = (PIND & (1 << PD6)); // อ่านค่าจากขา D6 (PD6)
+// M2 = Front Right = D5 (PD5), D6 (PD6)
+    void counterM2_ISR() {
+    a2 = (PIND >> PD5) & 1;
+    b2 = (PIND >> PD6) & 1;
 
-    if (a3 != prevA3) {  // ตรวจจับการเปลี่ยนแปลงของสัญญาณ A3
-        if (a3 ^ b3) { counterM3++; }  
-        else { counterM3--; }  
+    if (a2 != prevA2) {
+        if (a2 ^ b2) counterM2++;
+        else         counterM2--;
     }
-    prevA3 = a3; // อัปเดตสถานะก่อนหน้า
-}
-
-/**
- * @brief ISR สำหรับมอเตอร์ M4 (Rear Left, RL)
- * ใช้ขา D3 (PD3) และ D4 (PD4) สำหรับอ่านสัญญาณจาก Encoder
- */
-void counterM4_ISR() { 
-    a4 = (PIND & (1 << PD3)); // อ่านค่าจากขา D3 (PD3)
-    b4 = (PIND & (1 << PD4)); // อ่านค่าจากขา D4 (PD4)
-
-    if (a4 != prevA4) {  // ตรวจจับการเปลี่ยนแปลงของสัญญาณ A4
-        if (a4 ^ b4) { counterM4++; }  
-        else { counterM4--; }  
+    prevA2 = a2;
     }
-    prevA4 = a4; // อัปเดตสถานะก่อนหน้า
-}
+
+// M3 = Rear Left = D3 (PD3), D4 (PD4)
+    void counterM3_ISR() {
+    a3 = (PIND >> PD3) & 1;
+    b3 = (PIND >> PD4) & 1;
+
+    if (a3 != prevA3) {
+        if (a3 ^ b3) counterM3++;
+        else         counterM3--;
+    }
+    prevA3 = a3;
+    }
+
+// M4 = Rear Right = D7 (PD7), D10 (PB3)
+    void counterM4_ISR() {
+    a4 = (PIND >> PD7) & 1;
+    b4 = (PINB >> PB2) & 1;
+
+    if (a4 != prevA4) {
+        if (a4 ^ b4) counterM4++;
+        else         counterM4--;
+    }
+    prevA4 = a4;
+    }
+
+
 
 
 /**
@@ -301,6 +350,12 @@ long movingAverage(long newValue, long filterArray[], int &index, int &count) {
 
 void debugPrint() {
     if (DEBUG_MODE) {
+        if (DEBUG_MODE) {
+        Serial.print("M1: "); Serial.print(counterM1);
+        Serial.print("  M2: "); Serial.print(counterM2);
+        Serial.print("  M3: "); Serial.print(counterM3);
+        Serial.print("  M4: "); Serial.println(counterM4);
+    }
     
     }
 }

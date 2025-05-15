@@ -15,7 +15,7 @@
 #include <avr/io.h>                         // ไลบรารีควบคุม I/O ของ ATmega
 #include <avr/interrupt.h>                  // ไลบรารีสำหรับใช้ Interrupts
 #include <Wire.h>                            // ไลบรารีสำหรับ I2C communication
-#include <ServoTimer2.h>                     // ไลบรารีควบคุม Servo โดยใช้ Timer2
+#include <Servo.h>                          // ไลบรารีควบคุม Servo
 #include <math.h>                           // IMU normalized
 
 
@@ -32,11 +32,11 @@
 #define md1_STBY 39
 #define md1_PWMA 12 
 #define md1_PWMB 13
-
-#define md2_AIN2 42
-#define md2_AIN1 40
-#define md2_BIN1 36
-#define md2_BIN2 34
+                    //previus pin
+#define md2_AIN2 40 //42
+#define md2_AIN1 42 //40
+#define md2_BIN1 34 //36
+#define md2_BIN2 36 //34
 #define md2_PWMA 10
 #define md2_PWMB 11
 
@@ -47,20 +47,23 @@
 #define FL_IN2 md1_AIN2
 #define FL_PWM md1_PWMA
 
-#define FR_IN1 md1_BIN1
-#define FR_IN2 md1_BIN2
-#define FR_PWM md1_PWMB
+#define FR_IN1   md2_AIN1
+#define FR_IN2   md2_AIN2
+#define FR_PWM   md2_PWMA
 
-#define RL_IN1 md2_AIN1
-#define RL_IN2 md2_AIN2
-#define RL_PWM md2_PWMA
+#define RL_IN1   md2_BIN1
+#define RL_IN2   md2_BIN2
+#define RL_PWM   md2_PWMB
 
-#define RR_IN1 md2_BIN1
-#define RR_IN2 md2_BIN2
-#define RR_PWM md2_PWMB
+#define RR_IN1   md1_BIN1
+#define RR_IN2   md1_BIN2
+#define RR_PWM   md1_PWMB
+
+
+
 
 #define RELAY1 33    // pin relay 1
-#define RELAY2 33    // pin relay 2
+#define RELAY2 32    // pin relay 2
 
 // ค่า Baud Rate ของ Serial Communication
 #define BAUD_RATE 250000
@@ -79,6 +82,9 @@
 
 // MPU6050
 uint8_t fifoBuffer[64]; 
+bool use_imu = false;
+bool use_imu_mag = false;
+
 
 // การชดเชยค่าของ Compass Sensor หลังจาก Calibration
 const float OFFSET_X = -349.0;  // Offset ตามแนวแกน X
@@ -91,21 +97,20 @@ const float SCALE_Z = 1.6124;
 // พินของเซ็นเซอร์วัดกระแสและแรงดันไฟฟ้า
 #define CURRENT_SENSOR_PIN A9
 #define VOLTAGE_SENSOR_PIN A8
+// ค่าคงที่สำหรับเซ็นเซอร์วัดกระแสไฟฟ้า (ACS712-20A)
+#define ACS712_SENSITIVITY 0.100  // 0.100 V/A
+// ค่า offset ที่ได้จากการ calibrate (เช่น analogRead() ขณะไม่มีโหลด)
+#define ACS712_ZERO_RAW 511     
 
-// ค่าคงที่สำหรับเซ็นเซอร์วัดกระแสไฟฟ้า (ACS712-05A)
-#define ACS712_SENSITIVITY 0.185  // 0.185V/A
 #define ADC_RESOLUTION 1024.0
 #define REFERENCE_VOLTAGE 5.0  // อ้างอิงแรงดันที่ 5V
-
-// ค่าคงที่สำหรับเซ็นเซอร์วัดแรงดันไฟฟ้า
-#define VOLTAGE_DIVIDER_RATIO 5.0  // ตัวอย่างค่าแบ่งแรงดัน
 
 // พินของ Servo Motor
 const uint8_t SERVO1_PIN = 44;
 const uint8_t SERVO2_PIN = 46;
 
 // ค่าเริ่มต้นของ Servo
-ServoTimer2 servo1, servo2;
+Servo servo1, servo2;
 const uint16_t MIN_POSITION = 1000;   // ตำแหน่งต่ำสุดของ Servo (us)
 const uint16_t MAX_POSITION = 2000;   // ตำแหน่งสูงสุดของ Servo (us)
 uint16_t current_position_1 = 1500;  // ตำแหน่งเริ่มต้นของ Servo1 (90°)
@@ -116,8 +121,8 @@ uint16_t STEP_SIZE_Y = 28;  // ขยับ 5 องศา ≈ 28us
 // Debugging
 #define DEBUG_BUFFER_SIZE 128
 char debug_buffer[DEBUG_BUFFER_SIZE];
-bool DEBUG_MODE_S2 = false;   // เปิดใช้งาน Debug Mode
-bool debug_flag = 0;       // เปิดใช้งานการพิมพ์ข้อมูล Debug
+bool DEBUG_MODE_S2 = 1;   // เปิดใช้งาน Debug Mode
+bool debug_flag = 1;       // เปิดใช้งานการพิมพ์ข้อมูล Debug
 
 
 // การควบคุมหุ่นยนต์
@@ -137,7 +142,7 @@ void cmdVelCallback(const geometry_msgs::Twist& cmd_vel_msg);
 // ROS Node และข้อความที่ใช้ใน ROS
 ros::NodeHandle nh;
 sensor_msgs::Imu imu_msg;
-sensor_msgs::MagneticField mag_msg;
+sensor_msgs::Imu mag_msg;
 std_msgs::String debug_msgs;
 std_msgs::UInt32 sensor_data_msg;
 std_msgs::Float32 temp_msg;
@@ -151,16 +156,16 @@ ros::Publisher imu_raw_pub("imu/data_raw", &imu_msg);
 ros::Publisher temp_pub("imu/temperature", &temp_msg);
 
 // ROS Subscribers
-ros::Subscriber<std_msgs::UInt16> sub_drive("/arduino/drive", DriveCallback);
-ros::Subscriber<std_msgs::UInt8> sub_servo("/arduino/servo", command_servo);
-ros::Subscriber<std_msgs::UInt32> sub_edit("/arduino/edit", commandEdit);
+ros::Subscriber<std_msgs::UInt16> sub_drive("/rb/cm/dr", DriveCallback);
+ros::Subscriber<std_msgs::UInt8> sub_servo("/rb/cm/sv", command_servo);
+ros::Subscriber<std_msgs::UInt32> sub_edit("/rb/cm/ed", commandEdit);
 ros::Subscriber<geometry_msgs::Twist> sub_cmd_vel("/cmd_vel", cmdVelCallback);
 
 // ตัวแปรเก็บสถานะของมอเตอร์
 unsigned long current_time;
 bool motor_running = false;
 unsigned long last_cmd_time = 0;
-uint16_t time_delay = 100;  // เวลาหน่วงสำหรับหยุดมอเตอร์อัตโนมัติ (ms)
+uint16_t time_delay = 60;  // เวลาหน่วงสำหรับหยุดมอเตอร์อัตโนมัติ (ms)
 
 /**
  * @brief ฟังก์ชัน setup() ใช้สำหรับกำหนดค่าเริ่มต้นของระบบก่อนเริ่ม loop()
@@ -243,7 +248,7 @@ void setup() {
         Serial2.println(")");
     }
 
-    // ตั้งค่าและทดสอบ Compa ss (QMC5883L)
+    // ตั้งค่าและทดสอบ Compass (QMC5883L)
     Wire.beginTransmission(QMC5883L_ADDRESS);
     if (Wire.endTransmission() == 0) {
         Serial2.println("Compass detected");
@@ -286,14 +291,19 @@ void loop() {
     static unsigned long lastPowerSensorTime = 0;
     unsigned long now = millis(); // อ่านเวลาปัจจุบัน
 
+    while (Serial1.available()) {
+    char c = Serial1.read();
+    processSerialData(c);
+    }
+
     // อ่านค่าจาก Compass ทุกๆ 100ms (10Hz)
-    if (now - lastCompassTime >= 10) {  
+    if ((now - lastCompassTime >= 10)&& use_imu) {  
         readCompass();
         lastCompassTime = now;
     }
 
     // อ่านค่าจาก IMU ทุกๆ 20ms (50Hz)
-    if (now - lastIMUTime >= 30) {  
+    if ((now - lastIMUTime >= 50)&& use_imu) {  
         readIMU();
         lastIMUTime = now;
     }
@@ -303,7 +313,7 @@ void loop() {
         voltage_cV = readVoltage();
         sensor_data_msg.data = ((uint32_t)current_mA << 16) | voltage_cV;
         sensor_data_pub.publish(&sensor_data_msg);
-        lastPowerSensorTime = now;
+        lastPowerSensorTime = now;      
     }
 
     // ตรวจสอบสถานะของมอเตอร์
@@ -311,9 +321,14 @@ void loop() {
         current_time = millis();
         if (current_time - last_cmd_time > time_delay) {
             // หากไม่มีคำสั่งใหม่ในช่วงเวลาที่กำหนด ให้หยุดมอเตอร์
-            //MotorCoastMode(); // อาจใช้โหมด coast mode เพื่อปล่อยมอเตอร์ให้หมุนอิสระ
+            MotorCoastMode(); // อาจใช้โหมด coast mode เพื่อปล่อยมอเตอร์ให้หมุนอิสระ
             motor_running = false;  
-            Serial2.println("Auto-stop: No cmd received");
+            if (debug_flag) {
+                snprintf(debug_buffer, sizeof(debug_buffer),
+                        "Auto-stop: No cmd received");
+                DebugPublish(debug_buffer);
+            }
+
         }
     }
 
@@ -373,44 +388,61 @@ void MotorCoastMode(){
  * @param pwmMD2B ค่าความเร็วของมอเตอร์ RR (0-255)
  */
 void moveRobot(uint8_t direc, uint8_t pwmMD1A, uint8_t pwmMD1B, uint8_t pwmMD2A, uint8_t pwmMD2B) {
+    const char* direction_str = "Unknown";
+
     switch (direc) {
         case 1:  // Forward
             setMotorDirection(1, 0); setMotorDirection(2, 0);
             setMotorDirection(3, 0); setMotorDirection(4, 0);
+            direction_str = "Forward";
             break;
+
         case 2:  // Left
             setMotorDirection(1, 1); setMotorDirection(2, 0);
             setMotorDirection(3, 0); setMotorDirection(4, 1);
+            direction_str = "Left";
             break;
+
         case 3:  // Right
             setMotorDirection(1, 0); setMotorDirection(2, 1);
             setMotorDirection(3, 1); setMotorDirection(4, 0);
+            direction_str = "Right";
             break;
+
         case 4:  // Backward
             setMotorDirection(1, 1); setMotorDirection(2, 1);
             setMotorDirection(3, 1); setMotorDirection(4, 1);
+            direction_str = "Backward";
             break;
+
         case 5:  // Turn Left
             setMotorDirection(1, 1); setMotorDirection(2, 0);
             setMotorDirection(3, 1); setMotorDirection(4, 0);
+            direction_str = "Turn Left";
             break;
+
         case 6:  // Turn Right
             setMotorDirection(1, 0); setMotorDirection(2, 1);
             setMotorDirection(3, 0); setMotorDirection(4, 1);
+            direction_str = "Turn Right";
             break;
+
         case 7:  // Forward Left
             setMotorCoastMode(1);    // FL
             setMotorDirection(2, 0); // FR
             setMotorDirection(3, 0); // RL
             setMotorCoastMode(4);    // RR
+            direction_str = "Forward Left";
             pwmMD1A = 0;
             pwmMD2B = 0;
             break;
+
         case 8:  // Forward Right
             setMotorDirection(1, 0); // FL
             setMotorCoastMode(2);    // FR
             setMotorCoastMode(3);    // RL
             setMotorDirection(4, 0); // RR
+            direction_str = "Forward Right";
             pwmMD1B = 0;
             pwmMD2A = 0;
             break;
@@ -420,6 +452,7 @@ void moveRobot(uint8_t direc, uint8_t pwmMD1A, uint8_t pwmMD1B, uint8_t pwmMD2A,
             setMotorDirection(2, 1); // FR
             setMotorDirection(3, 1); // RL
             setMotorCoastMode(4);    // RR
+            direction_str = "Backward Left";
             pwmMD1A = 0;
             pwmMD2B = 0;
             break;
@@ -429,9 +462,11 @@ void moveRobot(uint8_t direc, uint8_t pwmMD1A, uint8_t pwmMD1B, uint8_t pwmMD2A,
             setMotorCoastMode(2);    // FR
             setMotorCoastMode(3);    // RL
             setMotorDirection(4, 1); // RR
+            direction_str = "Backward Right";
             pwmMD1B = 0;
             pwmMD2A = 0;
             break;
+
         default:
             Serial2.println("Invalid direction command");
             return;
@@ -446,11 +481,12 @@ void moveRobot(uint8_t direc, uint8_t pwmMD1A, uint8_t pwmMD1B, uint8_t pwmMD2A,
     // Debug
     if (debug_flag) {
         snprintf(debug_buffer, sizeof(debug_buffer),
-                 "Direc: %d FL(PWM1A):%d FR(PWM1B):%d RL(PWM2A):%d RR(PWM2B):%d",
-                 direc, pwmMD1A, pwmMD1B, pwmMD2A, pwmMD2B);
+                 "Direc: %s (%d)  FL:%d  FR:%d  RL:%d  RR:%d",
+                 direction_str, direc, pwmMD1A, pwmMD1B, pwmMD2A, pwmMD2B);
         DebugPublish(debug_buffer);
     }
 }
+
 
 /**
  * @brief ทำให้มอเตอร์หมุนอิสระ (Coast Mode)
@@ -557,7 +593,7 @@ void controlMotors(float vx, float vy, float omega) {
     //  ส่งค่าควบคุมมอเตอร์ไปยัง `setMotorPWM()`
     // MD1 - ควบคุมมอเตอร์หน้า-ซ้าย (M1) และหน้า-ขวา (M2)
     setMotorPWM(wheel_FL, FL_IN1, FL_IN2, FL_PWM);  // M1 - FL
-    setMotorPWM(wheel_FR, FR_IN1, FR_IN1, FR_PWM);  // M2 - FR
+    setMotorPWM(wheel_FR, FR_IN1, FR_IN2, FR_PWM);  // M2 - FR
     
     // MD2 - ควบคุมมอเตอร์หลัง-ซ้าย (M3) และหลัง-ขวา (M4)
     setMotorPWM(wheel_RL, RL_IN1, RL_IN2, RL_PWM);  // M3 - RL
@@ -620,39 +656,59 @@ void setMotorPWM(float speed, int in1, int in2, int pwmPin) {
  * - ค่า `STEP_SIZE_X` และ `STEP_SIZE_Y` ใช้กำหนดระดับการเคลื่อนที่ของเซอร์โวในแต่ละคำสั่ง
  */
 void command_servo(const std_msgs::UInt8& msg) {
-    if (msg.data > 0x7){
-      serial2Print("Ivalid servo value", msg.data);
+    if (msg.data > 0x7) {
+        serial2Print("Invalid servo value", msg.data);
+        return;
     }
     switch (msg.data) {
-        case 0x1: // ขยับเซอร์โว 1 ไปทางซ้าย
+        case 0x1: // ซ้าย
             current_position_1 = max(current_position_1 - STEP_SIZE_X, MIN_POSITION);
-            moveServo(SERVO1_PIN, current_position_1);
+            servo1.writeMicroseconds(current_position_1);
             break;
-        case 0x2: // ขยับเซอร์โว 1 ไปทางขวา
+
+        case 0x2: // ขวา
             current_position_1 = min(current_position_1 + STEP_SIZE_X, MAX_POSITION);
-            moveServo(SERVO1_PIN, current_position_1);
+            servo1.writeMicroseconds(current_position_1);
             break;
-        case 0x3: // ขยับเซอร์โว 2 ขึ้น
+
+        case 0x3: // ขึ้น
             current_position_2 = max(current_position_2 - STEP_SIZE_Y, MIN_POSITION);
-            moveServo(SERVO2_PIN, current_position_2);
+            servo2.writeMicroseconds(current_position_2);
             break;
-        case 0x4: // ขยับเซอร์โว 2 ลง
+
+        case 0x4: // ลง
             current_position_2 = min(current_position_2 + STEP_SIZE_Y, MAX_POSITION);
-            moveServo(SERVO2_PIN, current_position_2);
+            servo2.writeMicroseconds(current_position_2);
             break;
-        case 0x5: // รีเซ็ตเซอร์โว 1 ไปตำแหน่งกลาง
-            moveServo(SERVO1_PIN, 1500);
+
+        case 0x5: // รีเซ็ต servo1
+            current_position_1 = 1500;
+            servo1.writeMicroseconds(current_position_1);
             break;
-        case 0x6: // รีเซ็ตเซอร์โว 2 ไปตำแหน่งกลาง
-            moveServo(SERVO2_PIN, 1500);
+
+        case 0x6: // รีเซ็ต servo2
+            current_position_2 = 1500;
+            servo2.writeMicroseconds(current_position_2);
             break;
-        case 0x7: // รีเซ็ตเซอร์โวทั้งสองตัวไปตำแหน่งกลาง
-            moveServo(SERVO1_PIN, 1500);
-            moveServo(SERVO2_PIN, 1500);
-            break;    
+
+        case 0x7: // รีเซ็ตทั้งคู่
+            current_position_1 = 1500;
+            current_position_2 = 1500;
+            servo1.writeMicroseconds(current_position_1);
+            servo2.writeMicroseconds(current_position_2);
+            break;
+
         default:
-            serial2Print("Ivalid servo value", msg.data);
+            serial2Print("Invalid servo value", msg.data);
             break;
+    }
+    // แสดงตำแหน่ง Pan / Tilt หลังสั่งงาน
+    if (debug_flag) {
+        int pan_deg  = map(current_position_1, MIN_POSITION, MAX_POSITION, 0, 180);
+        int tilt_deg = map(current_position_2, MIN_POSITION, MAX_POSITION, 0, 180);
+        snprintf(debug_buffer, sizeof(debug_buffer),
+                 "Servo Pan: %d°  Tilt: %d°", pan_deg, tilt_deg);
+        DebugPublish(debug_buffer);
     }
 }
 
@@ -668,28 +724,30 @@ void commandEdit(const std_msgs::UInt32& msg) {
 
     // ใช้ switch-case เพื่อตรวจสอบว่าต้องแก้ไขค่าตัวแปรใด
     switch (variable_id) {
-        case 0x01: // แก้ไขค่า time_delay
+        case 0x01: { // แก้ไขค่า time_delay
             time_delay = msg.data & 0xFFFFFF; // 24 บิตล่างคือค่าที่ต้องการเปลี่ยน
-            // ส่ง debug message ไปยัง ROS
             snprintf(debug_buffer, sizeof(debug_buffer), "Updated time_delay to: %d", time_delay);
             DebugPublish(debug_buffer);
             break;
+        }
 
-        case 0x02: // แก้ไขค่า STEP_SIZE_X (ขนาด step ของ Servo X)
+        case 0x02: { // แก้ไขค่า STEP_SIZE_X (ขนาด step ของ Servo X)
             STEP_SIZE_X = msg.data & 0xFFFFFF;
             snprintf(debug_buffer, sizeof(debug_buffer), "Updated STEP_SIZE_X to: %d", STEP_SIZE_X);
             DebugPublish(debug_buffer);
             break;
+        }
 
-        case 0x03: // แก้ไขค่า STEP_SIZE_Y (ขนาด step ของ Servo Y)
+        case 0x03: { // แก้ไขค่า STEP_SIZE_Y (ขนาด step ของ Servo Y)
             STEP_SIZE_Y = msg.data & 0xFFFFFF;
             snprintf(debug_buffer, sizeof(debug_buffer), "Updated STEP_SIZE_Y to: %d", STEP_SIZE_Y);
             DebugPublish(debug_buffer);
             break;
+        }
 
-        case 0x05: // เปลี่ยนโหมดควบคุมมอเตอร์ (AUTO / MANUAL)
-            uint8_t flag_mode = msg.data & 0xFF; // 24 บิตล่างใช้แทนค่าของโหมด (0 = AUTO, 1 = MANUAL)
-            
+        case 0x05: { // เปลี่ยนโหมดควบคุมมอเตอร์ (AUTO / MANUAL)
+            uint8_t flag_mode = msg.data & 0xFF;
+
             MotorCoastMode(); // หยุดมอเตอร์ก่อนเปลี่ยนโหมด
 
             if (flag_mode == 0) {
@@ -697,39 +755,93 @@ void commandEdit(const std_msgs::UInt32& msg) {
             } else if (flag_mode == 1) {
                 current_mode = MANUAL;
             }
+
             snprintf(debug_buffer, sizeof(debug_buffer), "Switched to %s mode", flag_mode == 0 ? "AUTO" : "MANUAL");
             DebugPublish(debug_buffer);
             break;
+        }
 
-        case 0x06: // เปิด / ปิดโหมด Debug
+        case 0x06: { // เปิด / ปิดโหมด Debug
             uint8_t flag_debug = msg.data & 0xFF;
             debug_flag = flag_debug;
             break;
+        }
 
-        case 0x07: // ขอข้อมูลค่าตัวแปรที่ใช้งานอยู่
+        case 0x07: { // ขอข้อมูลค่าตัวแปรที่ใช้งานอยู่
             snprintf(debug_buffer, sizeof(debug_buffer),
-            "{ \"STEP_Servo_X\": %d, \"STEP_Servo_Y\": %d, \"debug_flag\": %d, \"time_delay\": %d }",
-            STEP_SIZE_X, STEP_SIZE_Y, debug_flag, time_delay);
+                     "{ \"STEP_Servo_X\": %d, \"STEP_Servo_Y\": %d, \"debug_flag\": %d, \"time_delay\": %d }",
+                     STEP_SIZE_X, STEP_SIZE_Y, debug_flag, time_delay);
             DebugPublish(debug_buffer);
             break;
-        case 0x07://relay
-            uint8_t flag_relay = msg.data & 0xFF;
-            switch (flag_relay) {
-                case 0x00: digitalWrite(RELAY1, LOW); break;
-                case 0x01: digitalWrite(RELAY1, HIGH); break;
-                case 0x02: digitalWrite(RELAY2, LOW); break;
-                case 0x03: digitalWrite(RELAY2, HIGH); break;
-                default: Serial2.println("Invalid relay command"); break;
-            }
-            break;
+        }
 
-        default: // กรณีที่ได้รับคำสั่งที่ไม่รู้จัก
+        case 0x08: { // ควบคุม Relay
+            uint8_t flag_relay = msg.data & 0xFF;
+
+            switch (flag_relay) {
+                case 0x00:
+                    digitalWrite(RELAY1, LOW);
+                    snprintf(debug_buffer, sizeof(debug_buffer), "R1 0");
+                    DebugPublish(debug_buffer);
+                    break;
+
+                case 0x01:
+                    digitalWrite(RELAY1, HIGH);
+                    snprintf(debug_buffer, sizeof(debug_buffer), "R1 1");
+                    DebugPublish(debug_buffer);
+                    break;
+
+                case 0x02:
+                    digitalWrite(RELAY2, LOW);
+                    snprintf(debug_buffer, sizeof(debug_buffer), "R2 0");
+                    DebugPublish(debug_buffer);
+                    break;
+
+                case 0x03:
+                    digitalWrite(RELAY2, HIGH);
+                    snprintf(debug_buffer, sizeof(debug_buffer), "R2 1");
+                    DebugPublish(debug_buffer);
+                    break;
+
+                default:
+                    snprintf(debug_buffer, sizeof(debug_buffer), "Invalid relay command");
+                    DebugPublish(debug_buffer);
+                    break;
+            }
+
+            break;
+        }
+        case 0x09: { // อับเดตค่า use_imu
+            uint8_t flag_imu = msg.data & 0xFF;
+            if (flag_imu == 0) {
+                use_imu = false;
+            } else if (flag_imu == 1) {
+                use_imu = true;
+            }
+            snprintf(debug_buffer,  sizeof(debug_buffer), "use_imu %d",flag_imu);
+            DebugPublish(debug_buffer);
+            break;
+        }
+        case 0x0A: { // อับเดตค่า use_imu_mag
+            uint8_t flag_imu_mag = msg.data & 0xFF;
+            if (flag_imu_mag == 0) {
+                use_imu_mag = false;
+            } else if (flag_imu_mag == 1) {
+                use_imu_mag = true;
+            }
+            snprintf(debug_buffer,  sizeof(debug_buffer), "use_imu_mag %d",use_imu_mag);
+
+            DebugPublish(debug_buffer);
+            break;
+        }
+
+        default: { // กรณีที่ได้รับคำสั่งที่ไม่รู้จัก
             snprintf(debug_buffer, sizeof(debug_buffer), "Invalid command edit ID: %d", variable_id);
             DebugPublish(debug_buffer);
             break;
-      }
+        }
+    }
 }
-
 /**
  * @brief รับคำสั่งควบคุมมอเตอร์จาก ROS และส่งให้หุ่นยนต์เคลื่อนที่ (เฉพาะโหมด Manual)
  *
@@ -903,15 +1015,6 @@ void normalizeQuaternion(sensor_msgs::Imu &msg) {
     }
 }
 
-/**
- * @brief อ่านค่าทิศทางจากเซ็นเซอร์ QMC5883L และส่งข้อมูลไปยัง ROS Topic
- * 
- * @details
- * - อ่านค่าข้อมูลของแกน X, Y, Z จากเซ็นเซอร์ QMC5883L ผ่าน I2C
- * - คำนวณค่าทิศทางโดยลบค่าชดเชย (Offset) และนำไปใช้เพื่อการนำทาง
- * - ตรวจสอบการอ่านข้อมูลจากเซ็นเซอร์ ถ้าไม่สามารถอ่านได้ ให้แสดงข้อความผิดพลาด
- * - ส่งค่าทางแม่เหล็กไปยัง ROS Topic `/imu/mag` ในรูปแบบ `sensor_msgs::MagneticField`
- */
 void readCompass() {   
     Wire.beginTransmission(QMC5883L_ADDRESS);
     Wire.write(0x00);
@@ -931,33 +1034,64 @@ void readCompass() {
         return;
     }
 
-    // อ่านเฉพาะค่า X และ Y
     int16_t x = Wire.read(); x |= Wire.read() << 8;
     int16_t y = Wire.read(); y |= Wire.read() << 8;
-    Wire.read(); Wire.read();  // ข้ามค่าของ Z
+    Wire.read(); Wire.read();  // skip Z
 
     float rawX = static_cast<float>(x) - OFFSET_X;
     float rawY = static_cast<float>(y) - OFFSET_Y;
 
-    // ตรวจสอบค่าที่ผิดปกติ
     if (abs(rawX) > 5000 || abs(rawY) > 5000) {
         Serial2.println("[ERROR] Compass data out of range!");
         return;
     }
 
-    // ตั้งค่า Header สำหรับ ROS Message
-    mag_msg.header.stamp = nh.now();
-    mag_msg.header.frame_id = "magnetometer";
+    // mag_msg.header.stamp = nh.now();
+    // mag_msg.header.frame_id = "mag_link";
+    // mag_msg.magnetic_field.x = rawX;
+    // mag_msg.magnetic_field.y = rawY;
+    // mag_msg.magnetic_field.z = 0.0;
+    // mag_pub.publish(&mag_msg);
 
-    // ใส่ค่า X และ Y เท่านั้น
-    mag_msg.magnetic_field.x = rawX;
-    mag_msg.magnetic_field.y = rawY;
-    mag_msg.magnetic_field.z = 0.0;  // ไม่ใช้ค่า Z
+    // กรอง heading
+    static float heading_prev = 0.0;
+    const float alpha = 0.1;
+
+    //คำนวณ heading
+    float heading = atan2(rawY, rawX);
+    if (heading < 0)
+        heading += 2 * PI;
+
+    heading = alpha * heading + (1 - alpha) * heading_prev;
+    heading_prev = heading;
+
+    float qx, qy, qz, qw;
+    yawToQuaternion(heading, qx, qy, qz, qw);
+
+    mag_msg.header.stamp = nh.now();
+    mag_msg.header.frame_id = "mag_link";
+
+    mag_msg.orientation.x = qx;
+    mag_msg.orientation.y = qy;
+    mag_msg.orientation.z = qz;
+    mag_msg.orientation.w = qw;
+
+    mag_msg.orientation_covariance[0] = -1.0;
+    mag_msg.orientation_covariance[4] = -1.0;
+    mag_msg.orientation_covariance[8] = 0.05;
 
     mag_pub.publish(&mag_msg);
 }
 
+void yawToQuaternion(float yaw, float& qx, float& qy, float& qz, float& qw) {
+    float cy = cos(yaw * 0.5);
+    float sy = sin(yaw * 0.5);
 
+    qx = 0.0;
+    qy = 0.0;
+    qz = sy;
+    qw = cy;
+}
 
 /**
  * @brief ปรับตำแหน่งของเซอร์โวมอเตอร์ด้วยค่า PWM ที่กำหนด
@@ -995,17 +1129,21 @@ void moveServo(int pin, int pwm_value) {
  * - ค่ากระแสที่ได้จะถูกแปลงจากแอมป์ (A) เป็นมิลลิแอมป์ (mA) ก่อนส่งคืน
  */
 uint16_t readCurrent() {
-    // อ่านค่าจากพินอนาล็อกของเซ็นเซอร์ ACS712
     int sensorValue = analogRead(CURRENT_SENSOR_PIN);
 
-    // แปลงค่า ADC (0-1023) เป็นแรงดันไฟฟ้า (V)
-    float voltage = (sensorValue / ADC_RESOLUTION) * REFERENCE_VOLTAGE;
+    // แปลงค่าดิบเป็นแรงดัน (V)
+    float voltage = ((float)sensorValue / ADC_RESOLUTION) * REFERENCE_VOLTAGE;
 
-    // คำนวณค่ากระแสไฟฟ้าโดยใช้ค่าอ้างอิงของ ACS712 (2.5V เป็นค่ากลาง)
-    float current = (voltage - (REFERENCE_VOLTAGE / 2)) / ACS712_SENSITIVITY;
+    // แปลง offset ที่ calibrate มา (ACS712_ZERO_RAW) → เป็นแรงดัน (V)
+    float zeroVoltage = ((float)ACS712_ZERO_RAW / ADC_RESOLUTION) * REFERENCE_VOLTAGE;
 
-    // แปลงค่าแอมป์ (A) เป็นมิลลิแอมป์ (mA) และส่งคืนค่า
-    return (uint16_t)(current * 1000);
+    // คำนวณกระแสจากแรงดันที่เบี่ยงเบนจากศูนย์
+    float current = (voltage - zeroVoltage) / ACS712_SENSITIVITY;
+
+    float currentmA = current * 1000.0 / 5.615;
+    serial2Print("current_mA : ", currentmA);
+
+    return (uint16_t)(abs(currentmA));  // แปลงเป็น unsigned 16-bit mA
 }
 
 /**
@@ -1021,14 +1159,18 @@ uint16_t readCurrent() {
  * - ค่า `VOLTAGE_DIVIDER_RATIO` คืออัตราการแบ่งแรงดันจากวงจรแบ่งแรงดัน (Voltage Divider)
  */
 uint16_t readVoltage() {
-    // อ่านค่าจากพินอนาล็อกของเซ็นเซอร์วัดแรงดัน
-    int sensorValue = analogRead(VOLTAGE_SENSOR_PIN);
-
-    // แปลงค่า ADC (0-1023) เป็นแรงดันไฟฟ้า (V)
-    float voltage = (sensorValue / ADC_RESOLUTION) * REFERENCE_VOLTAGE * VOLTAGE_DIVIDER_RATIO;
-
-    // แปลงแรงดันจากโวลต์ (V) เป็นเซนติโวลต์ (cV) และส่งคืนค่า
-    return (uint16_t)(voltage * 100);
+    int val = analogRead(VOLTAGE_SENSOR_PIN);  // อ่านค่า ADC
+    
+    // แปลงค่า ADC → แรงดันจริงที่วัดได้จากโมดูล
+    // โมดูลนี้ใช้วงจรแบ่งแรงดัน (Voltage Divider) ด้วย R1 = 30k, R2 = 7.5k
+    // ทำให้แรงดันที่ Arduino เห็น = แรงดันจริง ÷ 5
+    // ดังนั้นแรงดันจริง = ค่า ADC × (5V ÷ 1024) × 5
+    //                      = ค่า ADC × 0.0048828125 × 5
+    //                      ≈ ค่า ADC × 0.02443
+    // 1.2578 (add offset)
+    float voltage = val * 0.02443 *  1.2578 ;       // แปลงเป็นแรงดัน (V) จากโมดูล 25V
+    serial2Print("Voltage : ", voltage); // พิมพ์ค่าแรงดัน
+    return (uint16_t)(voltage * 100);    // แปลงเป็น centivolt (cV)
 }
 
 //debug serial2
