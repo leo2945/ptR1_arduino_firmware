@@ -297,7 +297,7 @@ void loop() {
     }
 
     // อ่านค่าจาก Compass ทุกๆ 100ms (10Hz)
-    if ((now - lastCompassTime >= 10)&& use_imu) {  
+    if ((now - lastCompassTime >= 10)&& use_imu_mag) {  
         readCompass();
         lastCompassTime = now;
     }
